@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shirtrip"
+version = "0.1.0"
+description = "ML-powered t-shirt graphic extraction pipeline"
+requires-python = ">=3.11"
+dependencies = [
+    "torch==2.7.1",
+    "torchvision==0.22.1",
+    "transformers>=4.40.0",
+    "opencv-python-headless>=4.7.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "Pillow>=10.0.0",
+    "numpy>=1.26.0",
+    "scikit-image>=0.22.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "python-multipart>=0.0.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",
+    "ruff>=0.3.0",
+]
+sam2 = [
+    "segment-anything-2",
+]
+
+[tool.ruff]
+line-length = 99
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests that require real model inference",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["shirtrip"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

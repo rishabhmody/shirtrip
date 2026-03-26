@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShirtRip — T-Shirt Graphic Extractor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f0f;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+        }
+        h1 { font-size: 2rem; margin-bottom: 0.5rem; color: #fff; }
+        .subtitle { color: #888; margin-bottom: 2rem; }
+
+        .drop-zone {
+            width: 100%;
+            max-width: 600px;
+            border: 2px dashed #444;
+            border-radius: 12px;
+            padding: 3rem 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: #6366f1;
+            background: #1a1a2e;
+        }
+        .drop-zone p { color: #888; margin-top: 0.5rem; }
+        .drop-zone input { display: none; }
+
+        .preview-container {
+            display: none;
+            width: 100%;
+            max-width: 900px;
+            margin-top: 2rem;
+            gap: 1.5rem;
+        }
+        .preview-container.visible { display: flex; flex-wrap: wrap; justify-content: center; }
+
+        .image-card {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 1rem;
+            flex: 1;
+            min-width: 280px;
+            max-width: 420px;
+        }
+        .image-card h3 { margin-bottom: 0.75rem; font-size: 0.9rem; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; }
+        .image-card img {
+            width: 100%;
+            border-radius: 8px;
+            background: repeating-conic-gradient(#333 0% 25%, #222 0% 50%) 50% / 20px 20px;
+        }
+
+        .spinner {
+            display: none;
+            margin: 2rem auto;
+            width: 40px;
+            height: 40px;
+            border: 4px solid #333;
+            border-top-color: #6366f1;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        .spinner.visible { display: block; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .status { margin-top: 1rem; color: #888; text-align: center; }
+        .status.error { color: #ef4444; }
+
+        .actions {
+            display: none;
+            margin-top: 1rem;
+            text-align: center;
+            gap: 1rem;
+        }
+        .actions.visible { display: flex; justify-content: center; }
+
+        .btn {
+            padding: 0.6rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-primary { background: #6366f1; color: #fff; }
+        .btn-primary:hover { background: #4f46e5; }
+        .btn-secondary { background: #333; color: #e0e0e0; }
+        .btn-secondary:hover { background: #444; }
+
+        .stats { margin-top: 0.5rem; font-size: 0.85rem; color: #666; text-align: center; }
+    </style>
+</head>
+<body>
+    <h1>ShirtRip</h1>
+    <p class="subtitle">Extract graphic designs from t-shirt photos</p>
+
+    <div class="drop-zone" id="dropZone">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="1.5">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <p>Drop a t-shirt photo here or click to upload</p>
+        <p style="font-size: 0.8rem;">JPG, PNG, WebP &mdash; max 20 MB</p>
+        <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.webp">
+    </div>
+
+    <div class="spinner" id="spinner"></div>
+    <p class="status" id="status"></p>
+
+    <div class="preview-container" id="preview">
+        <div class="image-card">
+            <h3>Original</h3>
+            <img id="originalImg" alt="Original upload">
+        </div>
+        <div class="image-card">
+            <h3>Extracted Graphic</h3>
+            <img id="resultImg" alt="Extracted graphic">
+        </div>
+    </div>
+
+    <div class="actions" id="actions">
+        <a id="downloadBtn" class="btn btn-primary" download>Download PNG</a>
+        <button class="btn btn-secondary" onclick="resetUI()">Upload Another</button>
+    </div>
+    <p class="stats" id="stats"></p>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const spinner = document.getElementById('spinner');
+        const status = document.getElementById('status');
+        const preview = document.getElementById('preview');
+        const actions = document.getElementById('actions');
+        const originalImg = document.getElementById('originalImg');
+        const resultImg = document.getElementById('resultImg');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const stats = document.getElementById('stats');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', e => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+        async function handleFile(file) {
+            // Show original preview
+            originalImg.src = URL.createObjectURL(file);
+            preview.classList.add('visible');
+            resultImg.src = '';
+            actions.classList.remove('visible');
+            stats.textContent = '';
+
+            // Show loading
+            spinner.classList.add('visible');
+            status.textContent = 'Extracting graphic...';
+            status.classList.remove('error');
+            dropZone.style.display = 'none';
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const resp = await fetch('/api/v1/extract', { method: 'POST', body: formData });
+
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.detail || err.error || 'Extraction failed');
+                }
+
+                const data = await resp.json();
+
+                // Show result
+                resultImg.src = `/api/v1/output/${data.job_id}`;
+                downloadBtn.href = `/api/v1/output/${data.job_id}`;
+                downloadBtn.download = `${data.job_id}.png`;
+                actions.classList.add('visible');
+                status.textContent = 'Done!';
+                stats.textContent = `Processed in ${data.processing_time_ms.toFixed(0)} ms`;
+
+            } catch (err) {
+                status.textContent = err.message;
+                status.classList.add('error');
+            } finally {
+                spinner.classList.remove('visible');
+            }
+        }
+
+        function resetUI() {
+            preview.classList.remove('visible');
+            actions.classList.remove('visible');
+            status.textContent = '';
+            stats.textContent = '';
+            dropZone.style.display = '';
+            fileInput.value = '';
+        }
+    </script>
+</body>
+</html>
