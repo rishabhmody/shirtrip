@@ -15,11 +15,46 @@ logger = logging.getLogger(__name__)
 
 StageFunction = Callable[[PipelineImage, Settings], PipelineResult]
 
+
+def _wrap_depth_estimate(image: PipelineImage, settings: Settings) -> PipelineResult:
+    from shirtrip.pipeline.stage_depth_estimate import depth_estimate
+
+    return depth_estimate(image, settings)
+
+
+def _wrap_dewarp(image: PipelineImage, settings: Settings, **kwargs) -> PipelineResult:
+    from shirtrip.pipeline.stage_dewarp import dewarp
+
+    return dewarp(image, settings, **kwargs)
+
+
+def _wrap_illuminate(image: PipelineImage, settings: Settings, **kwargs) -> PipelineResult:
+    from shirtrip.pipeline.stage_illuminate import illuminate
+
+    return illuminate(image, settings, **kwargs)
+
+
+def _wrap_alpha_matte(image: PipelineImage, settings: Settings) -> PipelineResult:
+    from shirtrip.pipeline.stage_alpha_matte import alpha_matte
+
+    return alpha_matte(image, settings)
+
+
 STAGE_REGISTRY: dict[str, StageFunction] = {
     "garment_parse": garment_parse,
+    "depth_estimate": _wrap_depth_estimate,
+    "dewarp": _wrap_dewarp,
+    "illuminate": _wrap_illuminate,
+    "alpha_matte": _wrap_alpha_matte,
 }
 
-DEFAULT_PIPELINE: list[str] = ["garment_parse"]
+DEFAULT_PIPELINE: list[str] = [
+    "garment_parse",
+    "depth_estimate",
+    "dewarp",
+    "illuminate",
+    "alpha_matte",
+]
 
 
 def run_pipeline(
@@ -48,7 +83,14 @@ def run_pipeline(
         logger.info("Running stage: %s", stage_name)
 
         try:
-            result = stage_fn(current_image, settings)
+            # Special handling: stages that need accumulated masks
+            if stage_name in ("dewarp", "illuminate"):
+                result = stage_fn(
+                    current_image, settings,
+                    depth_map=all_masks.get("depth"),
+                )
+            else:
+                result = stage_fn(current_image, settings)
         except PipelineError:
             raise
         except Exception as e:
