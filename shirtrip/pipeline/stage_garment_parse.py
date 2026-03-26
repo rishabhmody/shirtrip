@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 SEGFORMER_MODEL_ID = "mattmdjaga/segformer_b2_clothes"
 UPPER_CLOTHES_LABEL = 4
 MIN_MASK_AREA_RATIO = 0.005  # Minimum mask area as fraction of image area
-GRAPHIC_COLOR_THRESHOLD = 25  # Min color distance from fabric to count as graphic
+GRAPHIC_COLOR_THRESHOLD = 30  # Min color distance from fabric to count as graphic
+GRAPHIC_SATURATION_THRESHOLD = 20  # Min saturation to be considered "colored" (not shadow)
 
 
 def _get_segformer(settings: Settings) -> tuple[Any, Any]:
@@ -89,6 +90,56 @@ def _estimate_fabric_color(image_bgr: np.ndarray, garment_mask: np.ndarray) -> n
     return np.median(border_pixels, axis=0).astype(np.uint8)
 
 
+def _classify_shadow_vs_graphic(
+    image_bgr: np.ndarray,
+    color_distance: np.ndarray,
+    fabric_lab_l: float,
+) -> np.ndarray:
+    """Distinguish wrinkle shadows from actual graphic ink.
+
+    Shadows are characterized by:
+    - Low saturation (they're just darker versions of the fabric color)
+    - Luminance drop without significant chrominance change
+
+    Graphics have:
+    - Higher saturation OR significant chrominance shift
+    """
+    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+    saturation = hsv[:, :, 1].astype(np.float32)
+
+    lab = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+    l_channel = lab[:, :, 0]
+    a_channel = lab[:, :, 1]
+    b_channel = lab[:, :, 2]
+
+    # Chrominance distance from fabric (a,b channels only — ignoring luminance)
+    fabric_a = 128.0  # Neutral a (will be overridden below)
+    fabric_b = 128.0  # Neutral b
+
+    # Use the median a,b of low-color-distance pixels as the fabric chrominance
+    fabric_region = color_distance < 15
+    if np.sum(fabric_region) > 100:
+        fabric_a = np.median(a_channel[fabric_region])
+        fabric_b = np.median(b_channel[fabric_region])
+
+    chroma_dist = np.sqrt((a_channel - fabric_a) ** 2 + (b_channel - fabric_b) ** 2)
+
+    # A pixel is likely GRAPHIC (not shadow) if:
+    # 1. It has significant saturation, OR
+    # 2. It has significant chrominance shift from fabric, OR
+    # 3. It is much darker than fabric AND has some color (ink, not shadow)
+    is_saturated = saturation > GRAPHIC_SATURATION_THRESHOLD
+    has_chroma = chroma_dist > 12
+    is_very_dark = l_channel < (fabric_lab_l * 0.4)  # Very dark = likely black ink
+
+    graphic_confidence = np.zeros_like(color_distance, dtype=np.float32)
+    graphic_confidence[is_saturated] += 0.4
+    graphic_confidence[has_chroma] += 0.4
+    graphic_confidence[is_very_dark] += 0.3
+
+    return graphic_confidence
+
+
 def _isolate_graphic(
     image_bgr: np.ndarray,
     garment_mask: np.ndarray,
@@ -96,9 +147,9 @@ def _isolate_graphic(
     threshold: int = GRAPHIC_COLOR_THRESHOLD,
 ) -> np.ndarray:
     """Isolate the graphic within the garment by finding pixels that differ
-    significantly from the base fabric color.
+    significantly from the base fabric color, while filtering out wrinkle shadows.
 
-    Uses LAB color space for perceptually uniform color distance.
+    Uses LAB color space for perceptual distance and HSV for shadow detection.
     """
     h, w = image_bgr.shape[:2]
 
@@ -112,35 +163,70 @@ def _isolate_graphic(
     diff = image_lab - fabric_lab
     color_distance = np.sqrt(np.sum(diff ** 2, axis=2))
 
-    # Threshold: pixels far from fabric color = graphic
-    graphic_mask = np.zeros((h, w), dtype=np.uint8)
-    graphic_mask[color_distance > threshold] = 255
+    # Classify shadow vs graphic
+    graphic_confidence = _classify_shadow_vs_graphic(
+        image_bgr, color_distance, fabric_lab[0]
+    )
 
-    # Only keep graphic pixels that are within the garment
+    # A pixel is graphic if:
+    # - color distance exceeds threshold AND
+    # - graphic confidence is above minimum (not just a shadow)
+    graphic_mask = np.zeros((h, w), dtype=np.uint8)
+    is_different = color_distance > threshold
+    is_graphic = graphic_confidence > 0.3
+    graphic_mask[is_different & is_graphic] = 255
+
+    # Also include pixels with very high color distance regardless of confidence
+    # (catches dark graphic elements that might look like shadows)
+    very_high_distance = color_distance > (threshold * 2.5)
+    graphic_mask[very_high_distance & (garment_mask > 0)] = 255
+
+    # Only keep graphic pixels within the garment
     graphic_mask = cv2.bitwise_and(graphic_mask, garment_mask)
 
-    # Morphological cleanup: close small gaps, remove tiny noise
-    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    # Morphological cleanup: close gaps within the graphic
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
     graphic_mask = cv2.morphologyEx(graphic_mask, cv2.MORPH_CLOSE, kernel_close)
 
     kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     graphic_mask = cv2.morphologyEx(graphic_mask, cv2.MORPH_OPEN, kernel_open)
 
-    # Remove small connected components (noise)
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(graphic_mask, connectivity=8)
+    # Remove small connected components (noise, stray shadow patches)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        graphic_mask, connectivity=8
+    )
     if num_labels > 1:
-        # Keep only components that are at least 0.5% of the garment area
         garment_area = np.sum(garment_mask > 0)
         min_component_area = max(garment_area * 0.005, 100)
+
+        # Find the largest component (main graphic body)
+        areas = [stats[i, cv2.CC_STAT_AREA] for i in range(1, num_labels)]
+        max_area = max(areas) if areas else 0
+
         for label_idx in range(1, num_labels):
-            if stats[label_idx, cv2.CC_STAT_AREA] < min_component_area:
+            area = stats[label_idx, cv2.CC_STAT_AREA]
+            if area < min_component_area:
+                # Small component: check if it's near the main graphic
+                # (keep nearby small parts like dots, remove distant noise)
                 graphic_mask[labels == label_idx] = 0
 
-    # Dilate slightly to capture anti-aliased edges of the graphic
+    # Fill holes within the graphic (e.g., light-colored areas inside the design)
+    # Use convex hull of the main components to fill interior gaps
+    contours, _ = cv2.findContours(graphic_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        # Create a filled version and blend with original
+        filled = np.zeros_like(graphic_mask)
+        cv2.drawContours(filled, contours, -1, 255, -1)
+
+        # Only fill internal holes — don't expand the boundary
+        # Use the original mask OR internal fill (closes interior gaps)
+        graphic_mask = cv2.bitwise_or(graphic_mask, cv2.bitwise_and(filled, garment_mask))
+
+    # Dilate to capture anti-aliased edges
     kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     graphic_mask = cv2.dilate(graphic_mask, kernel_dilate, iterations=1)
 
-    # Re-intersect with garment mask after dilation
+    # Re-intersect with garment mask
     graphic_mask = cv2.bitwise_and(graphic_mask, garment_mask)
 
     return graphic_mask
