@@ -140,8 +140,7 @@ def _detect_graphic_boxes(
 
     results = processor.post_process_grounded_object_detection(
         outputs,
-        inputs.input_ids,
-        box_threshold=settings.dino_box_threshold,
+        threshold=settings.dino_box_threshold,
         text_threshold=settings.dino_text_threshold,
         target_sizes=[(h, w)],
     )[0]
