@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
     "torch==2.7.1",
     "torchvision==0.22.1",
-    "transformers>=4.40.0",
+    "transformers>=4.45.0",
     "opencv-python-headless>=4.7.0",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
