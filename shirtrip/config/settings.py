@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     # Grounding DINO + SAM settings
     dino_model_id: str = "IDEA-Research/grounding-dino-tiny"
     sam_model_id: str = "facebook/sam-vit-base"
-    graphic_prompt: str = "graphic design . text . logo . printed artwork"
-    dino_box_threshold: float = 0.3
-    dino_text_threshold: float = 0.25
+    graphic_prompt: str = "print . design . picture . pattern . image on clothing"
+    dino_box_threshold: float = 0.15
+    dino_text_threshold: float = 0.15
     sequential_gpu_loading: bool = True  # Unload models between stages to save VRAM
 
     upload_dir: Path = Path("uploads")

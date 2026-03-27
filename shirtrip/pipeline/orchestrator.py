@@ -50,10 +50,6 @@ STAGE_REGISTRY: dict[str, StageFunction] = {
 
 DEFAULT_PIPELINE: list[str] = [
     "garment_parse",
-    "depth_estimate",
-    "dewarp",
-    "illuminate",
-    "alpha_matte",
 ]
 
 

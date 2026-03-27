@@ -149,6 +149,11 @@ def _detect_graphic_boxes(
     scores = results["scores"].cpu().numpy()
     labels = results["labels"]
 
+    logger.info(
+        "DINO raw detections: %d boxes (threshold=%.2f, text_threshold=%.2f)",
+        len(boxes), settings.dino_box_threshold, settings.dino_text_threshold,
+    )
+
     filtered_boxes: list[list[int]] = []
     for i, box in enumerate(boxes):
         x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
@@ -156,23 +161,21 @@ def _detect_graphic_boxes(
         x2, y2 = min(w, x2), min(h, y2)
 
         if x2 <= x1 or y2 <= y1:
+            logger.info("DINO detection %d: degenerate box [%d,%d,%d,%d], skipping", i, x1, y1, x2, y2)
             continue
 
         # Check overlap with garment mask
         box_region = garment_mask[y1:y2, x1:x2]
         overlap_ratio = np.sum(box_region > 0) / ((x2 - x1) * (y2 - y1))
 
-        if overlap_ratio > 0.3:
+        logger.info(
+            "DINO detection %d: [%d,%d,%d,%d] score=%.3f label='%s' "
+            "garment_overlap=%.1f%%",
+            i, x1, y1, x2, y2, scores[i], labels[i], overlap_ratio * 100,
+        )
+
+        if overlap_ratio > 0.1:
             filtered_boxes.append([x1, y1, x2, y2])
-            logger.info(
-                "DINO detection %d: [%d,%d,%d,%d] score=%.3f label='%s' "
-                "garment_overlap=%.1f%%",
-                i, x1, y1, x2, y2, scores[i], labels[i], overlap_ratio * 100,
-            )
-        else:
-            logger.debug(
-                "DINO detection %d rejected: overlap=%.1f%% < 30%%", i, overlap_ratio * 100
-            )
 
     return filtered_boxes
 
