@@ -175,7 +175,11 @@
                 const formData = new FormData();
                 formData.append('file', file);
 
-                const resp = await fetch('/api/v1/extract', { method: 'POST', body: formData });
+                const resp = await fetch('/api/v1/extract', {
+                    method: 'POST',
+                    body: formData,
+                    headers: { 'ngrok-skip-browser-warning': 'true' },
+                });
 
                 if (!resp.ok) {
                     const err = await resp.json();
@@ -185,8 +189,13 @@
                 const data = await resp.json();
 
                 // Show result
-                resultImg.src = `/api/v1/output/${data.job_id}`;
-                downloadBtn.href = `/api/v1/output/${data.job_id}`;
+                // Fetch result image with ngrok header (can't set headers on img.src)
+                const imgResp = await fetch(`/api/v1/output/${data.job_id}`, {
+                    headers: { 'ngrok-skip-browser-warning': 'true' },
+                });
+                const imgBlob = await imgResp.blob();
+                resultImg.src = URL.createObjectURL(imgBlob);
+                downloadBtn.href = URL.createObjectURL(imgBlob);
                 downloadBtn.download = `${data.job_id}.png`;
                 actions.classList.add('visible');
                 status.textContent = 'Done!';
